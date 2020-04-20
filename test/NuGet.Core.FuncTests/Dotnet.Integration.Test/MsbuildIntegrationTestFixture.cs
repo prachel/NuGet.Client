@@ -9,11 +9,15 @@ using System.Linq;
 using System.Reflection;
 using System.Text;
 using System.Threading;
+using Dotnet.Integration.Test.Utils;
 using Newtonsoft.Json.Linq;
+using NuGet.Commands;
 using NuGet.Common;
+using NuGet.Frameworks;
 using NuGet.Packaging.Core;
 using NuGet.Protocol;
 using NuGet.Test.Utility;
+using NuGet.Versioning;
 using NuGet.XPlat.FuncTest;
 using Xunit;
 
@@ -22,10 +26,11 @@ namespace Dotnet.Integration.Test
     public class MsbuildIntegrationTestFixture : IDisposable
     {
         private readonly TestDirectory _cliDirectory;
-        private readonly TestDirectory _templateDirectory;
+        private readonly SimpleTestPathContext _templateDirectory;
         private readonly string _dotnetCli = DotnetCliUtil.GetDotnetCli();
         internal readonly string TestDotnetCli;
         internal readonly string MsBuildSdksPath;
+        internal string SdkVersion { get; private set; }
         private readonly Dictionary<string, string> _processEnvVars = new Dictionary<string, string>();
 
         public MsbuildIntegrationTestFixture()
@@ -34,18 +39,24 @@ namespace Dotnet.Integration.Test
             var dotnetExecutableName = RuntimeEnvironmentHelper.IsWindows ? "dotnet.exe" : "dotnet";
             TestDotnetCli = Path.Combine(_cliDirectory, dotnetExecutableName);
 
-            var sdkPaths = Directory.GetDirectories(Path.Combine(_cliDirectory, "sdk"));
+            var sdkPath = Directory.GetDirectories(Path.Combine(_cliDirectory, "sdk")).Single();
 
+#if NETCOREAPP5_0
             // TODO - remove when shipping. See https://github.com/NuGet/Home/issues/8508
-            // const string dotnetMajorVersion = "3.";
-            const string dotnetMajorVersion = "5.";
-            PatchSDKWithCryptographyDlls(dotnetMajorVersion, sdkPaths);
+            PatchSDKWithCryptographyDlls(sdkPath);
+#endif
 
-            MsBuildSdksPath = Path.Combine(
-             sdkPaths.Where(path => path.Split(Path.DirectorySeparatorChar).Last().StartsWith(dotnetMajorVersion)).First()
-             , "Sdks");
+            MsBuildSdksPath = Path.Combine(sdkPath, "Sdks");
 
-            _templateDirectory = TestDirectory.Create();
+            _templateDirectory = new SimpleTestPathContext();
+            WriteGlobalJson(_templateDirectory.WorkingDirectory);
+            var addSourceArgs = new AddSourceArgs()
+            {
+                Configfile = _templateDirectory.NuGetConfig,
+                Name = "nuget.org",
+                Source = "https://api.nuget.org/v3/index.json"
+            };
+            AddSourceRunner.Run(addSourceArgs, () => NullLogger.Instance);
 
             _processEnvVars.Add("MSBuildSDKsPath", MsBuildSdksPath);
             _processEnvVars.Add("UseSharedCompilation", "false");
@@ -65,7 +76,7 @@ namespace Dotnet.Integration.Test
             {
                 Directory.CreateDirectory(workingDirectory);
             }
-            var templateDirectory = new DirectoryInfo(Path.Combine(_templateDirectory.Path, args));
+            var templateDirectory = new DirectoryInfo(Path.Combine(_templateDirectory.SolutionRoot, args));
 
             if (!templateDirectory.Exists)
             {
@@ -234,6 +245,48 @@ namespace Dotnet.Integration.Test
             Assert.True(result.Item3 == "", $"Build failed with following message in error stream :\n {result.AllOutput}");
         }
 
+        internal TestDirectory CreateTestDirectory()
+        {
+            var testDirectory = TestDirectory.Create();
+
+            WriteGlobalJson(testDirectory);
+
+            return testDirectory;
+        }
+
+        internal SimpleTestPathContext CreateSimpleTestPathContext()
+        {
+            var simpleTestPathContext = new SimpleTestPathContext();
+
+            WriteGlobalJson(simpleTestPathContext.WorkingDirectory);
+
+            var addSourceArgs = new AddSourceArgs()
+            {
+                Configfile = simpleTestPathContext.NuGetConfig,
+                Name = "template",
+                Source = _templateDirectory.UserPackagesFolder
+            };
+            AddSourceRunner.Run(addSourceArgs, () => NullLogger.Instance);
+
+            return simpleTestPathContext;
+        }
+
+        internal TestDirectory Build(TestDirectoryBuilder testDirectoryBuilder)
+        {
+            var testDirectory = testDirectoryBuilder.Build();
+
+            WriteGlobalJson(testDirectory);
+
+            return testDirectory;
+        }
+
+        private void WriteGlobalJson(string path)
+        {
+            string globalJsonText = $"{{\"sdk\": {{\"version\": \"{SdkVersion}\"}}}}";
+            var globalJsonPath = Path.Combine(path, "global.json");
+            File.WriteAllText(globalJsonPath, globalJsonText);
+        }
+
         private TestDirectory CopyLatestCliForPack()
         {
             var cliDirectory = TestDirectory.Create();
@@ -245,9 +298,28 @@ namespace Dotnet.Integration.Test
         private void CopyLatestCliToTestDirectory(string destinationDir)
         {
             var cliDir = Path.GetDirectoryName(_dotnetCli);
+            var sdkDir = Path.Combine(cliDir, "sdk" + Path.DirectorySeparatorChar);
 
-            //Create sub-directory structure in destination
-            foreach (var directory in Directory.GetDirectories(cliDir, "*", SearchOption.AllDirectories))
+            // Determine which SDK version to copy
+            SdkVersion = GetSdkToTest(sdkDir);
+
+            WriteGlobalJson(destinationDir);
+
+            var sdkPath = Path.Combine(sdkDir, SdkVersion + Path.DirectorySeparatorChar);
+            var fallbackFolderPath = Path.Combine(sdkDir, "NuGetFallbackFolder");
+
+            Func<string, bool> predicate = path =>
+            {
+                if (!path.StartsWith(sdkDir))
+                {
+                    return true;
+                }
+
+                return path.StartsWith(sdkPath) || path.StartsWith(fallbackFolderPath);
+            };
+
+            //Create sub-directory structure in destination, ignoring any SDK version not selected.
+            foreach (var directory in Directory.GetDirectories(cliDir, "*", SearchOption.AllDirectories).Where(predicate))
             {
                 var destDir = destinationDir + directory.Substring(cliDir.Length);
                 if (!Directory.Exists(destDir))
@@ -258,13 +330,48 @@ namespace Dotnet.Integration.Test
 
             var lastWriteTime = DateTime.Now.AddDays(-2);
 
-            //Copy files recursively to destination directories
-            foreach (var fileName in Directory.GetFiles(cliDir, "*", SearchOption.AllDirectories))
+            //Copy files recursively to destination directories, ignoring any SDK version not selected.
+            foreach (var fileName in Directory.GetFiles(cliDir, "*", SearchOption.AllDirectories).Where(predicate))
             {
                 var destFileName = destinationDir + fileName.Substring(cliDir.Length);
                 File.Copy(fileName, destFileName);
                 File.SetLastWriteTime(destFileName, lastWriteTime);
             }
+        }
+
+        private string GetSdkToTest(string sdkDir)
+        {
+            // The TFM we're testing
+            var testTfm = AssemblyReader.GetTargetFramework(typeof(MsbuildIntegrationTestFixture).Assembly.Location);
+
+            var selectedVersion =
+                Directory.GetDirectories(sdkDir) // get all directories in sdk folder
+                .Where(path =>
+                { // SDK is for TFM to test
+                    if (string.Equals(Path.GetFileName(path), "NuGetFallbackFolder", StringComparison.OrdinalIgnoreCase))
+                    {
+                        return false;
+                    }
+
+                    var dotnetPath = Path.Combine(path, "dotnet.dll");
+                    var sdkTfm = AssemblyReader.GetTargetFramework(dotnetPath);
+
+                    return testTfm == sdkTfm;
+                })
+                .Select(Path.GetFileName) // just the folder name (version string)
+                .OrderByDescending(path => NuGetVersion.Parse(Path.GetFileName(path))) // in case there are multiple matching SDKs, selected the highest version
+                .FirstOrDefault();
+
+            if (selectedVersion == null)
+            {
+                var message = $@"Could not find suitable SDK to test in {sdkDir}
+TFM being tested: {testTfm.DotNetFrameworkName}
+SDKs found: {string.Join(", ", Directory.GetDirectories(sdkDir).Select(Path.GetFileName).Where(d => !string.Equals(d, "NuGetFallbackFolder", StringComparison.OrdinalIgnoreCase)))}";
+
+                throw new Exception(message);
+            }
+
+            return selectedVersion;
         }
 
         private void UpdateCliWithLatestNuGetAssemblies(string cliDirectory)
@@ -290,46 +397,69 @@ namespace Dotnet.Integration.Test
             const string restoreTargetsName = "NuGet.targets";
             var sdkDependencies = new List<string> { restoreProjectName, "NuGet.Versioning", "NuGet.Protocol", "NuGet.ProjectModel", "NuGet.Packaging", "NuGet.LibraryModel", "NuGet.Frameworks", "NuGet.DependencyResolver.Core", "NuGet.Configuration", "NuGet.Common", "NuGet.Commands", "NuGet.CommandLine.XPlat", "NuGet.Credentials" };
 
+            var sdkTfm = AssemblyReader.GetTargetFramework(Path.Combine(pathToSdkInCli, "dotnet.dll"));
+
             // Copy rest of the NuGet assemblies.
             foreach (var projectName in sdkDependencies)
             {
-                var projectArtifactsFolder = new DirectoryInfo(Path.Combine(artifactsDirectory, projectName, toolsetVersion, "bin", configuration));
+                var projectArtifactsBinFolder = Path.Combine(artifactsDirectory, projectName, toolsetVersion, "bin", configuration);
 
-                IEnumerable<DirectoryInfo> frameworkArtifactFolders = projectArtifactsFolder.EnumerateDirectories().Where(folder => folder.FullName.Contains("netstandard2.1") || folder.FullName.Contains("netcoreapp5.0"));
+                var tfmToCopy = GetTfmToCopy(sdkTfm, projectArtifactsBinFolder);
+                var frameworkArtifactsFolder = new DirectoryInfo(Path.Combine(projectArtifactsBinFolder, tfmToCopy));
 
-                if (!frameworkArtifactFolders.Any())
+                var fileName = projectName + ".dll";
+                File.Copy(
+                        sourceFileName: Path.Combine(frameworkArtifactsFolder.FullName, fileName),
+                        destFileName: Path.Combine(pathToSdkInCli, fileName),
+                        overwrite: true);
+                // Copy the restore targets.
+                if (projectName.Equals(restoreProjectName))
                 {
-                    frameworkArtifactFolders = projectArtifactsFolder.EnumerateDirectories().Where(folder => folder.FullName.Contains("netstandard2.0"));
-                }
-
-                foreach (var frameworkArtifactsFolder in frameworkArtifactFolders)
-                {
-                    var fileName = projectName + ".dll";
                     File.Copy(
-                            sourceFileName: Path.Combine(frameworkArtifactsFolder.FullName, fileName),
-                            destFileName: Path.Combine(pathToSdkInCli, fileName),
-                            overwrite: true);
-                    // Copy the restore targets.
-                    if (projectName.Equals(restoreProjectName))
-                    {
-                        File.Copy(
-                            sourceFileName: Path.Combine(frameworkArtifactsFolder.FullName, restoreTargetsName),
-                            destFileName: Path.Combine(pathToSdkInCli, restoreTargetsName),
-                            overwrite: true);
-                    }
+                        sourceFileName: Path.Combine(frameworkArtifactsFolder.FullName, restoreTargetsName),
+                        destFileName: Path.Combine(pathToSdkInCli, restoreTargetsName),
+                        overwrite: true);
                 }
             }
+        }
+
+        private string GetTfmToCopy(NuGetFramework sdkTfm, string projectArtifactsBinFolder)
+        {
+            var compiledTfms =
+                Directory.GetDirectories(projectArtifactsBinFolder) // get all directories in bin folder
+                .Select(Path.GetFileName) // just the folder name (tfm)
+                .ToDictionary(folder => NuGetFramework.Parse(folder));
+
+            var reducer = new FrameworkReducer();
+            var selectedTfm = reducer.GetNearest(sdkTfm, compiledTfms.Keys);
+
+            if (selectedTfm == null)
+            {
+                var message = $@"Could not find suitable assets to copy in {projectArtifactsBinFolder}
+TFM being tested: {sdkTfm}
+project TFMs found: {string.Join(", ", compiledTfms.Keys.Select(k => k.ToString()))}";
+
+                throw new Exception(message);
+            }
+
+            var selectedVersion = compiledTfms[selectedTfm];
+
+            return selectedVersion;
         }
 
         private void CopyPackSdkArtifacts(string artifactsDirectory, string pathToSdkInCli, string configuration, string toolsetVersion)
         {
             var pathToPackSdk = Path.Combine(pathToSdkInCli, "Sdks", "NuGet.Build.Tasks.Pack");
+            var sdkTfm = AssemblyReader.GetTargetFramework(Path.Combine(pathToSdkInCli, "dotnet.dll"));
 
             const string packProjectName = "NuGet.Build.Tasks.Pack";
             const string packTargetsName = "NuGet.Build.Tasks.Pack.targets";
             // Copy the pack SDK.
-            //Order by fullname so that we can get the latest nestandard version. E.g. if we have both netstandard2.0 and netstandard2.1, netstandard2.1 will be selected.
-            var packProjectCoreArtifactsDirectory = new DirectoryInfo(Path.Combine(artifactsDirectory, packProjectName, toolsetVersion, "bin", configuration)).EnumerateDirectories("netstandard*").OrderBy(x => x.FullName).Last();
+
+            var packProjectBinDirectory = Path.Combine(artifactsDirectory, packProjectName, toolsetVersion, "bin", configuration);
+            var tfmToCopy = GetTfmToCopy(sdkTfm, packProjectBinDirectory);
+
+            var packProjectCoreArtifactsDirectory = new DirectoryInfo(Path.Combine(packProjectBinDirectory, tfmToCopy));
             var packAssemblyDestinationDirectory = Path.Combine(pathToPackSdk, "CoreCLR");
             // Be smart here so we don't have to call ILMerge in the VS build. It takes ~15s total.
             // In VisualStudio, simply use the non il merged version.
@@ -453,16 +583,15 @@ namespace Dotnet.Integration.Test
         /// Temporary patching process to bring in Cryptography DLLs for testing while SDK gets around to including them in 5.0.
         /// See also: https://github.com/NuGet/Home/issues/8508
         /// </summary>
-        private void PatchSDKWithCryptographyDlls(string dotnetMajorVersion, string[] sdkPaths)
+        private void PatchSDKWithCryptographyDlls(string sdkPath)
         {
-            string directoryToPatch = sdkPaths.Where(path => path.Split(Path.DirectorySeparatorChar).Last().StartsWith(dotnetMajorVersion)).First();
             var assemblyNames = new string[1] { "System.Security.Cryptography.Pkcs.dll" };
-            PatchDepsJsonFiles(assemblyNames, directoryToPatch);
+            PatchDepsJsonFiles(assemblyNames, sdkPath);
 
             string userProfilePath = Environment.GetEnvironmentVariable(RuntimeEnvironmentHelper.IsWindows ? "USERPROFILE" : "HOME");
             string globalPackagesPath = Path.Combine(userProfilePath, ".nuget", "packages");
 
-            CopyNewlyAddedDlls(assemblyNames, Directory.GetCurrentDirectory(), directoryToPatch);
+            CopyNewlyAddedDlls(assemblyNames, Directory.GetCurrentDirectory(), sdkPath);
         }
 
         private void PatchDepsJsonFiles(string[] assemblyNames, string patchDir)
