@@ -16,6 +16,7 @@ namespace NuGet.VisualStudio
         public static string PackagesConfigRestore = nameof(PackagesConfigRestore);
         public static string SolutionDependencyGraphSpecCreation = nameof(SolutionDependencyGraphSpecCreation);
         public static string PackageReferenceRestoreDuration = nameof(PackageReferenceRestoreDuration);
+        public const string UpToDateProjectCount = nameof(UpToDateProjectCount);
 
         public RestoreTelemetryEvent(
             string operationId,
@@ -25,12 +26,14 @@ namespace NuGet.VisualStudio
             NuGetOperationStatus status,
             int packageCount,
             int noOpProjectsCount,
+            int upToDateProjectsCount,
             DateTimeOffset endTime,
             double duration,
             IntervalTracker intervalTimingTracker) : base(RestoreActionEventName, operationId, projectIds, startTime, status, packageCount, endTime, duration)
         {
             base[nameof(OperationSource)] = source;
             base[nameof(NoOpProjectsCount)] = noOpProjectsCount;
+            base[UpToDateProjectCount] = upToDateProjectsCount;
 
             foreach (var (intervalName, intervalDuration) in intervalTimingTracker.GetIntervals())
             {
