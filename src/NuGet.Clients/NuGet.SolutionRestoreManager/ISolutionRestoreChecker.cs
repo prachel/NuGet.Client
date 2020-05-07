@@ -10,7 +10,7 @@ namespace NuGet.SolutionRestoreManager
 {
     public interface ISolutionRestoreChecker
     {
-        public IEnumerable<string> PerformUpToDateCheck(DependencyGraphSpec dependencyGraphSpec)
+        IEnumerable<string> PerformUpToDateCheck(DependencyGraphSpec dependencyGraphSpec);
         void ReportStatus(IReadOnlyList<RestoreSummary> restoreSummaries);
     }
 }
