@@ -424,7 +424,7 @@ namespace NuGet.PackageManagement.UI
 
         public void UpdatePackageStatus(IEnumerable<PackageCollectionItem> installedPackages)
         {
-            // Get the minimum version installed in any target project/solution
+            // Get the maxium version installed in any target project/solution
             InstalledVersion = installedPackages
                 .GetPackageVersions(Id)
                 .MaxOrDefault();
