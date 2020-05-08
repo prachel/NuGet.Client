@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.ComponentModel.Composition;
 using System.IO;
 using System.Linq;
+
 using NuGet.Commands;
 using NuGet.Common;
 using NuGet.ProjectModel;
@@ -18,28 +19,67 @@ namespace NuGet.SolutionRestoreManager
     {
         private IList<string> _failedProjects = new List<string>();
         private DependencyGraphSpec _cachedDependencyGraphSpec;
-
         private Dictionary<string, OutputWriteTime> _outputWriteTimes = new Dictionary<string, OutputWriteTime>();
 
+        public void ReportStatus(IReadOnlyList<RestoreSummary> restoreSummaries)
+        {
+            _failedProjects.Clear();
+
+            foreach (var summary in restoreSummaries)
+            {
+                if (summary.Success)
+                {
+                    var packageSpec = _cachedDependencyGraphSpec.GetProjectSpec(summary.InputPath);
+                    GetOutputFilePaths(packageSpec, out string assetsFilePath, out string targetsFilePath, out string propsFilePath, out string lockFilePath);
+
+                    _outputWriteTimes[summary.InputPath] = new OutputWriteTime()
+                    {
+                        _lastAssetsFileWriteTime = GetLastWriteTime(assetsFilePath),
+                        _lastTargetsFileWriteTime = GetLastWriteTime(targetsFilePath),
+                        _lastPropsFileWriteTime = GetLastWriteTime(propsFilePath),
+                        _lastLockFileWriteTime = GetLastWriteTime(lockFilePath)
+                    };
+                }
+                else
+                {
+                    _failedProjects.Add(summary.InputPath);
+                }
+
+            }
+        }
+
+        // The algorithm here is a 2 pass. In reality the 2nd pass can do a lot but for huge benefits :)
+        // Pass #1
+        // We check all the specs against the cached ones if any. Any project with a change in the spec is considered dirty.
+        // If a project had previously been restored and it failed, it is considered dirty.
+        // Every project that is considered to have a dirty spec will be important in pass #2.
+        // Lastly in the first pass, we validate the outputs for the projects. Note that these are independent and project specific. Outputs not being up to date it irrelevant for transitivity.
+        // Pass #2
+        // For every project with a dirty spec (the outputs don't matter here), we want to ensure that its parent projects are marked as dirty as well.
+        // This is a bit more expensive since PackageSpecs do not retain pointers to the projects that reference them as ProjectReference.
+        // Result
+        // Lastly all the projects marked as having dirty specs & dirty outputs are returned.
         public IEnumerable<string> PerformUpToDateCheck(DependencyGraphSpec dependencyGraphSpec)
         {
             var result = Enumerable.Empty<string>();
             if (_cachedDependencyGraphSpec != null)
             {
-                var DirtySpecs = new List<string>();
-                var DirtyOutputs = new List<string>();
+                var dirtySpecs = new List<string>();
+                var dirtyOutputs = new List<string>();
 
-                // Pass #1. Validate all the graph specs. If all are up to date. We are good!
+                // Pass #1. Validate all the data (i/o)
+                // 1a. Validate the package specs (references & settings)
+                // 1b. Validate the expected outputs (assets file, nuget.g.*, lock file)
                 foreach (var project in dependencyGraphSpec.Projects)
                 {
                     var projectUniqueName = project.RestoreMetadata.ProjectUniqueName;
-                    // Check the cached one.
                     var cache = _cachedDependencyGraphSpec.GetProjectSpec(projectUniqueName);
-                    if (cache == null || !project.Equals(cache))
+
+                    if (_failedProjects.Contains(projectUniqueName) || cache == null || !project.Equals(cache))
                     {
-                        DirtySpecs.Add(projectUniqueName);
+                        dirtySpecs.Add(projectUniqueName);
                     }
-                    // TODO NK - Handle project.json
+
                     if (project.RestoreMetadata.ProjectStyle == ProjectStyle.PackageReference)
                     {
                         if (_outputWriteTimes.TryGetValue(projectUniqueName, out OutputWriteTime outputWriteTime))
@@ -47,37 +87,40 @@ namespace NuGet.SolutionRestoreManager
                             GetOutputFilePaths(project, out string assetsFilePath, out string targetsFilePath, out string propsFilePath, out string lockFilePath);
                             if (!AreOutputsUpToDate(assetsFilePath, targetsFilePath, propsFilePath, lockFilePath, outputWriteTime))
                             {
-                                DirtyOutputs.Add(projectUniqueName);
+                                dirtyOutputs.Add(projectUniqueName);
                             }
                         }
                         else
                         {
-                            DirtyOutputs.Add(projectUniqueName);
+                            dirtyOutputs.Add(projectUniqueName);
                         }
+                    }
+                    else if (project.RestoreMetadata.ProjectStyle == ProjectStyle.ProjectJson)
+                    {
+                        dirtyOutputs.Add(projectUniqueName);
                     }
                 }
 
-                if (DirtySpecs.Count == 0 && DirtyOutputs.Count == 0)
+                // Fast path. Skip Pass #2
+                if (dirtySpecs.Count == 0 && dirtyOutputs.Count == 0)
                 {
-                    // Fast path. No-Op completely if all specs are up to date.
                     return result;
                 }
 
                 // Pass #2 For any dirty specs discrepancies, mark them and their parents as needing restore.
-                var dirtyProjects = GetAllDirtyParents(DirtySpecs, dependencyGraphSpec);
+                var dirtyProjects = GetAllDirtyParents(dirtySpecs, dependencyGraphSpec);
 
-                // Pass #3 All dirty projects + projects with outputs need to be restored.
-
-                result = dirtyProjects.Union(DirtyOutputs);
+                // All dirty projects + projects with outputs that need to be restored.
+                result = dirtyProjects.Union(dirtyOutputs);
             }
 
-            // Update the cache.
+            // Update the cache
             _cachedDependencyGraphSpec = dependencyGraphSpec;
 
             return result;
         }
 
-        public IList<string> GetAllDirtyParents(List<string> DirtySpecs, DependencyGraphSpec dependencyGraphSpec)
+        internal IList<string> GetAllDirtyParents(List<string> DirtySpecs, DependencyGraphSpec dependencyGraphSpec)
         {
             var projectsByUniqueName = dependencyGraphSpec.Projects
                 .ToDictionary(t => t.RestoreMetadata.ProjectUniqueName, t => t, PathUtility.GetStringComparerBasedOnOS());
@@ -101,7 +144,6 @@ namespace NuGet.SolutionRestoreManager
                     }
                 }
             }
-
             return DirtyProjects.ToList();
         }
 
@@ -115,7 +157,7 @@ namespace NuGet.SolutionRestoreManager
                 .ToArray();
         }
 
-        public IList<string> GetAllDirtyParentsFaster(List<string> DirtySpecs, DependencyGraphSpec dependencyGraphSpec)
+        public static IList<string> GetAllDirtyParentsFaster(List<string> DirtySpecs, DependencyGraphSpec dependencyGraphSpec)
         {
             var projectsByUniqueName = dependencyGraphSpec.Projects
                 .ToDictionary(t => t.RestoreMetadata.ProjectUniqueName, t => t, PathUtility.GetStringComparerBasedOnOS());
@@ -147,41 +189,22 @@ namespace NuGet.SolutionRestoreManager
             return DirtyProjects;
         }
 
-        //public IReadOnlyList<string> GetParents(string rootUniqueName, DependencyGraphSpec dependencyGraphSpec)
-        //{
-        //    var parents = new List<PackageSpec>();
-
-        //    foreach (var project in dependencyGraphSpec.Projects)
-        //    {
-        //        if (!StringComparer.OrdinalIgnoreCase.Equals(
-        //            project.RestoreMetadata.ProjectUniqueName,
-        //            rootUniqueName))
-        //        {
-        //            var closure = GetClosure(project.RestoreMetadata.ProjectUniqueName);
-
-        //            if (closure.Any(e => StringComparer.OrdinalIgnoreCase.Equals(
-        //                e.RestoreMetadata.ProjectUniqueName,
-        //                rootUniqueName)))
-        //            {
-        //                parents.Add(project);
-        //            }
-        //        }
-        //    }
-
-        //    return parents
-        //        .Select(e => e.RestoreMetadata.ProjectUniqueName)
-        //        .ToList();
-        //}
-
-        private static void GetOutputFilePaths(PackageSpec packageSpec, out string assetsFilePath, out string targetsFilePath, out string propsFilePath, out string lockFilePath)
+        internal static void GetOutputFilePaths(PackageSpec packageSpec, out string assetsFilePath, out string targetsFilePath, out string propsFilePath, out string lockFilePath)
         {
             assetsFilePath = GetAssetsFilePath(packageSpec.RestoreMetadata.OutputPath);
             targetsFilePath = BuildAssetsUtils.GetMSBuildFilePathForPackageReferenceStyleProject(packageSpec, BuildAssetsUtils.TargetsExtension);
             propsFilePath = BuildAssetsUtils.GetMSBuildFilePathForPackageReferenceStyleProject(packageSpec, BuildAssetsUtils.PropsExtension);
-            lockFilePath = null; // fix the lock files later.
+            if (packageSpec.RestoreMetadata.RestoreLockProperties != null)
+            {
+                lockFilePath = packageSpec.RestoreMetadata.RestoreLockProperties.NuGetLockFilePath;
+            }
+            else
+            {
+                lockFilePath = null;
+            }
         }
 
-        private bool AreOutputsUpToDate(string assetsFilePath, string targetsFilePath, string propsFilePath, string lockFilePath, OutputWriteTime outputWriteTime)
+        private static bool AreOutputsUpToDate(string assetsFilePath, string targetsFilePath, string propsFilePath, string lockFilePath, OutputWriteTime outputWriteTime)
         {
             DateTime currentAssetsFileWriteTime = GetLastWriteTime(assetsFilePath);
             DateTime currentTargetsFilePath = GetLastWriteTime(targetsFilePath);
@@ -212,33 +235,6 @@ namespace NuGet.SolutionRestoreManager
             return Path.Combine(
                 outputPath,
                 LockFileFormat.AssetsFileName);
-        }
-
-        public void ReportStatus(IReadOnlyList<RestoreSummary> restoreSummaries)
-        {
-            _failedProjects.Clear();
-
-            foreach (var summary in restoreSummaries)
-            {
-                if (summary.Success)
-                {
-                    var packageSpec = _cachedDependencyGraphSpec.GetProjectSpec(summary.InputPath);
-                    GetOutputFilePaths(packageSpec, out string assetsFilePath, out string targetsFilePath, out string propsFilePath, out string lockFilePath);
-
-                    _outputWriteTimes.Add(summary.InputPath, new OutputWriteTime()
-                    {
-                        _lastAssetsFileWriteTime = GetLastWriteTime(assetsFilePath),
-                        _lastTargetsFileWriteTime = GetLastWriteTime(targetsFilePath),
-                        _lastPropsFileWriteTime = GetLastWriteTime(propsFilePath),
-                        _lastLockFileWriteTime = GetLastWriteTime(lockFilePath)
-                    });
-                }
-                else
-                {
-                    _failedProjects.Add(summary.InputPath);
-                }
-
-            }
         }
     }
 
