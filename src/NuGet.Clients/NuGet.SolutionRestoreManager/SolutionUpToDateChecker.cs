@@ -6,7 +6,6 @@ using System.Collections.Generic;
 using System.ComponentModel.Composition;
 using System.IO;
 using System.Linq;
-
 using NuGet.Commands;
 using NuGet.Common;
 using NuGet.ProjectModel;
@@ -53,10 +52,11 @@ namespace NuGet.SolutionRestoreManager
         // We check all the specs against the cached ones if any. Any project with a change in the spec is considered dirty.
         // If a project had previously been restored and it failed, it is considered dirty.
         // Every project that is considered to have a dirty spec will be important in pass #2.
-        // Lastly in the first pass, we validate the outputs for the projects. Note that these are independent and project specific. Outputs not being up to date it irrelevant for transitivity.
+        // In the first pass, we also validate the outputs for the projects. Note that these are independent and project specific. Outputs not being up to date it irrelevant for transitivity.
         // Pass #2
         // For every project with a dirty spec (the outputs don't matter here), we want to ensure that its parent projects are marked as dirty as well.
         // This is a bit more expensive since PackageSpecs do not retain pointers to the projects that reference them as ProjectReference.
+        // Finally we only update the cache specs if Pass #1 determined that there are projects that are not up to date.
         // Result
         // Lastly all the projects marked as having dirty specs & dirty outputs are returned.
         public IEnumerable<string> PerformUpToDateCheck(DependencyGraphSpec dependencyGraphSpec)
@@ -80,7 +80,8 @@ namespace NuGet.SolutionRestoreManager
                         dirtySpecs.Add(projectUniqueName);
                     }
 
-                    if (project.RestoreMetadata.ProjectStyle == ProjectStyle.PackageReference)
+                    if (project.RestoreMetadata.ProjectStyle == ProjectStyle.PackageReference ||
+                        project.RestoreMetadata.ProjectStyle == ProjectStyle.ProjectJson)
                     {
                         if (_outputWriteTimes.TryGetValue(projectUniqueName, out OutputWriteTime outputWriteTime))
                         {
@@ -94,10 +95,6 @@ namespace NuGet.SolutionRestoreManager
                         {
                             dirtyOutputs.Add(projectUniqueName);
                         }
-                    }
-                    else if (project.RestoreMetadata.ProjectStyle == ProjectStyle.ProjectJson)
-                    {
-                        dirtyOutputs.Add(projectUniqueName);
                     }
                 }
 
@@ -191,6 +188,7 @@ namespace NuGet.SolutionRestoreManager
 
         internal static void GetOutputFilePaths(PackageSpec packageSpec, out string assetsFilePath, out string targetsFilePath, out string propsFilePath, out string lockFilePath)
         {
+            // TODO NK - account for project.json
             assetsFilePath = GetAssetsFilePath(packageSpec.RestoreMetadata.OutputPath);
             targetsFilePath = BuildAssetsUtils.GetMSBuildFilePathForPackageReferenceStyleProject(packageSpec, BuildAssetsUtils.TargetsExtension);
             propsFilePath = BuildAssetsUtils.GetMSBuildFilePathForPackageReferenceStyleProject(packageSpec, BuildAssetsUtils.PropsExtension);
