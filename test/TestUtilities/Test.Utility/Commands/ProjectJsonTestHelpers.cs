@@ -5,7 +5,6 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
-using NuGet.Common;
 using NuGet.Frameworks;
 using NuGet.ProjectModel;
 
@@ -107,7 +106,7 @@ namespace NuGet.Commands.Test
             updated.RestoreMetadata.OutputPath = projectDir;
             updated.RestoreMetadata.ProjectStyle = ProjectStyle.PackageReference;
             updated.RestoreMetadata.ProjectName = spec.Name;
-            updated.RestoreMetadata.ProjectUniqueName = spec.Name;
+            updated.RestoreMetadata.ProjectUniqueName = projectPath;
             updated.RestoreMetadata.ProjectPath = projectPath;
             updated.RestoreMetadata.ConfigFilePaths = new List<string>();
             updated.RestoreMetadata.CentralPackageVersionsEnabled = spec.RestoreMetadata?.CentralPackageVersionsEnabled ?? false;

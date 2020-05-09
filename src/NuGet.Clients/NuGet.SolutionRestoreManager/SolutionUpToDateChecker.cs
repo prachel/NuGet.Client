@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.ComponentModel.Composition;
 using System.IO;
 using System.Linq;
+
 using NuGet.Commands;
 using NuGet.Common;
 using NuGet.ProjectModel;
@@ -61,7 +62,6 @@ namespace NuGet.SolutionRestoreManager
         // Lastly all the projects marked as having dirty specs & dirty outputs are returned.
         public IEnumerable<string> PerformUpToDateCheck(DependencyGraphSpec dependencyGraphSpec)
         {
-            var result = Enumerable.Empty<string>();
             if (_cachedDependencyGraphSpec != null)
             {
                 var dirtySpecs = new List<string>();
@@ -75,7 +75,7 @@ namespace NuGet.SolutionRestoreManager
                     var projectUniqueName = project.RestoreMetadata.ProjectUniqueName;
                     var cache = _cachedDependencyGraphSpec.GetProjectSpec(projectUniqueName);
 
-                    if (_failedProjects.Contains(projectUniqueName) || cache == null || !project.Equals(cache))
+                    if (cache == null || !project.Equals(cache))
                     {
                         dirtySpecs.Add(projectUniqueName);
                     }
@@ -83,7 +83,7 @@ namespace NuGet.SolutionRestoreManager
                     if (project.RestoreMetadata.ProjectStyle == ProjectStyle.PackageReference ||
                         project.RestoreMetadata.ProjectStyle == ProjectStyle.ProjectJson)
                     {
-                        if (_outputWriteTimes.TryGetValue(projectUniqueName, out OutputWriteTime outputWriteTime))
+                        if (!_failedProjects.Contains(projectUniqueName) && _outputWriteTimes.TryGetValue(projectUniqueName, out OutputWriteTime outputWriteTime))
                         {
                             GetOutputFilePaths(project, out string assetsFilePath, out string targetsFilePath, out string propsFilePath, out string lockFilePath);
                             if (!AreOutputsUpToDate(assetsFilePath, targetsFilePath, propsFilePath, lockFilePath, outputWriteTime))
@@ -101,23 +101,26 @@ namespace NuGet.SolutionRestoreManager
                 // Fast path. Skip Pass #2
                 if (dirtySpecs.Count == 0 && dirtyOutputs.Count == 0)
                 {
-                    return result;
+                    return Enumerable.Empty<string>();
                 }
+                // Update the cache before Pass #2
+                _cachedDependencyGraphSpec = dependencyGraphSpec;
 
                 // Pass #2 For any dirty specs discrepancies, mark them and their parents as needing restore.
                 var dirtyProjects = GetAllDirtyParents(dirtySpecs, dependencyGraphSpec);
 
                 // All dirty projects + projects with outputs that need to be restored.
-                result = dirtyProjects.Union(dirtyOutputs);
+                return dirtyProjects.Union(dirtyOutputs);
             }
+            else
+            {
+                _cachedDependencyGraphSpec = dependencyGraphSpec;
 
-            // Update the cache
-            _cachedDependencyGraphSpec = dependencyGraphSpec;
-
-            return result;
+                return dependencyGraphSpec.Restore;
+            }
         }
 
-        internal IList<string> GetAllDirtyParents(List<string> DirtySpecs, DependencyGraphSpec dependencyGraphSpec)
+        internal static IList<string> GetAllDirtyParents(List<string> DirtySpecs, DependencyGraphSpec dependencyGraphSpec)
         {
             var projectsByUniqueName = dependencyGraphSpec.Projects
                 .ToDictionary(t => t.RestoreMetadata.ProjectUniqueName, t => t, PathUtility.GetStringComparerBasedOnOS());
@@ -154,7 +157,7 @@ namespace NuGet.SolutionRestoreManager
                 .ToArray();
         }
 
-        public static IList<string> GetAllDirtyParentsFaster(List<string> DirtySpecs, DependencyGraphSpec dependencyGraphSpec)
+        internal static IList<string> GetAllDirtyParentsFaster(List<string> DirtySpecs, DependencyGraphSpec dependencyGraphSpec)
         {
             var projectsByUniqueName = dependencyGraphSpec.Projects
                 .ToDictionary(t => t.RestoreMetadata.ProjectUniqueName, t => t, PathUtility.GetStringComparerBasedOnOS());

@@ -26,6 +26,7 @@ using NuGet.ProjectManagement;
 using NuGet.ProjectManagement.Projects;
 using NuGet.ProjectModel;
 using NuGet.Protocol.Core.Types;
+using NuGet.Shared;
 using NuGet.VisualStudio;
 using NuGet.VisualStudio.Telemetry;
 using Task = System.Threading.Tasks.Task;
@@ -337,18 +338,15 @@ namespace NuGet.SolutionRestoreManager
                 // Get full dg spec
                 var (originalDgSpec, additionalMessages) = await DependencyGraphRestoreUtility.GetSolutionRestoreSpecAndAdditionalMessages(_solutionManager, cacheContext);
                 // Run solution based up to date check.
-                var projectsNeedingRestore = _solutionUpToDateChecker.PerformUpToDateCheck(originalDgSpec);
+                var projectsNeedingRestore = _solutionUpToDateChecker.PerformUpToDateCheck(originalDgSpec).AsList();
                 // recorded the number of up to date projects
-                _upToDateProjectCount = originalDgSpec.Restore.Count - projectsNeedingRestore.Count();
+                _upToDateProjectCount = originalDgSpec.Restore.Count - projectsNeedingRestore.Count;
 
-                DependencyGraphSpec dgSpec = new DependencyGraphSpec();
-                if(_upToDateProjectCount > 0)
+                // Update the dg spec.
+                var dgSpec = originalDgSpec.WithoutRestores();
+                foreach (var uniqueProjectId in projectsNeedingRestore)
                 {
-                    dgSpec = originalDgSpec.WithoutRestores();
-                    foreach(var uniqueProjectId in projectsNeedingRestore)
-                    {
-                        dgSpec.AddRestore(uniqueProjectId);
-                    }
+                    dgSpec.AddRestore(uniqueProjectId);
                 }
 
                 intervalTracker.EndIntervalMeasure(RestoreTelemetryEvent.SolutionDependencyGraphSpecCreation);
