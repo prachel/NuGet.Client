@@ -6,7 +6,6 @@ using System.Collections.Generic;
 using System.ComponentModel.Composition;
 using System.IO;
 using System.Linq;
-
 using NuGet.Commands;
 using NuGet.Common;
 using NuGet.ProjectModel;
@@ -191,18 +190,12 @@ namespace NuGet.SolutionRestoreManager
 
         internal static void GetOutputFilePaths(PackageSpec packageSpec, out string assetsFilePath, out string targetsFilePath, out string propsFilePath, out string lockFilePath)
         {
-            // TODO NK - account for project.json
-            assetsFilePath = GetAssetsFilePath(packageSpec.RestoreMetadata.OutputPath);
-            targetsFilePath = BuildAssetsUtils.GetMSBuildFilePathForPackageReferenceStyleProject(packageSpec, BuildAssetsUtils.TargetsExtension);
-            propsFilePath = BuildAssetsUtils.GetMSBuildFilePathForPackageReferenceStyleProject(packageSpec, BuildAssetsUtils.PropsExtension);
-            if (packageSpec.RestoreMetadata.RestoreLockProperties != null)
-            {
-                lockFilePath = packageSpec.RestoreMetadata.RestoreLockProperties.NuGetLockFilePath;
-            }
-            else
-            {
-                lockFilePath = null;
-            }
+            assetsFilePath = GetAssetsFilePath(packageSpec);
+            targetsFilePath = BuildAssetsUtils.GetMSBuildFilePath(packageSpec, BuildAssetsUtils.TargetsExtension);
+            propsFilePath = BuildAssetsUtils.GetMSBuildFilePath(packageSpec, BuildAssetsUtils.PropsExtension);
+            lockFilePath = packageSpec.RestoreMetadata.RestoreLockProperties != null ?
+                packageSpec.RestoreMetadata.RestoreLockProperties.NuGetLockFilePath :
+                null;
         }
 
         private static bool AreOutputsUpToDate(string assetsFilePath, string targetsFilePath, string propsFilePath, string lockFilePath, OutputWriteTime outputWriteTime)
@@ -231,11 +224,19 @@ namespace NuGet.SolutionRestoreManager
             return default;
         }
 
-        private static string GetAssetsFilePath(string outputPath)
+        private static string GetAssetsFilePath(PackageSpec packageSpec)
         {
-            return Path.Combine(
-                outputPath,
-                LockFileFormat.AssetsFileName);
+            if (packageSpec.RestoreMetadata?.ProjectStyle == ProjectStyle.PackageReference)
+            {
+                return Path.Combine(
+                    packageSpec.RestoreMetadata.OutputPath,
+                    LockFileFormat.AssetsFileName);
+            }
+            else if (packageSpec.RestoreMetadata?.ProjectStyle == ProjectStyle.ProjectJson)
+            {
+                return ProjectJsonPathUtilities.GetLockFilePath(packageSpec.FilePath);
+            }
+            return null;
         }
     }
 

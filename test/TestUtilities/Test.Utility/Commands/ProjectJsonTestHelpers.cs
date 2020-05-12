@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+
 using NuGet.Frameworks;
 using NuGet.ProjectModel;
 
@@ -46,6 +47,26 @@ namespace NuGet.Commands.Test
                 dgSpec.AddProject(EnsureRestoreMetadata(child));
             }
 
+            return dgSpec;
+        }
+
+        /// <summary>
+        /// Creates a dg specs with all PackageReference and project.json projects to be restored.
+        /// </summary>
+        /// <param name="projects"></param>
+        /// <returns></returns>
+        public static DependencyGraphSpec GetDGSpecFromPackageSpecs(params PackageSpec[] projects)
+        {
+            var dgSpec = new DependencyGraphSpec();
+            foreach (var project in projects)
+            {
+                dgSpec.AddProject(project);
+                if (project.RestoreMetadata.ProjectStyle == ProjectStyle.PackageReference ||
+                    project.RestoreMetadata.ProjectStyle == ProjectStyle.ProjectJson)
+                {
+                    dgSpec.AddRestore(project.RestoreMetadata.ProjectUniqueName);
+                }
+            }
             return dgSpec;
         }
 
