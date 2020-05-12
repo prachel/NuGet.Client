@@ -6,6 +6,8 @@ using System.Collections.Generic;
 using System.ComponentModel.Composition;
 using System.IO;
 using System.Linq;
+using System.Threading.Tasks;
+
 using NuGet.Commands;
 using NuGet.Common;
 using NuGet.ProjectModel;
@@ -65,6 +67,7 @@ namespace NuGet.SolutionRestoreManager
             {
                 var dirtySpecs = new List<string>();
                 var dirtyOutputs = new List<string>();
+                bool hasDirtyNonTransitiveSpecs = false;
 
                 // Pass #1. Validate all the data (i/o)
                 // 1a. Validate the package specs (references & settings)
@@ -95,6 +98,10 @@ namespace NuGet.SolutionRestoreManager
                             dirtyOutputs.Add(projectUniqueName);
                         }
                     }
+                    else
+                    {
+                        hasDirtyNonTransitiveSpecs = true;
+                    }
                 }
 
                 // Fast path. Skip Pass #2
@@ -108,8 +115,14 @@ namespace NuGet.SolutionRestoreManager
                 // Pass #2 For any dirty specs discrepancies, mark them and their parents as needing restore.
                 var dirtyProjects = GetAllDirtyParents(dirtySpecs, dependencyGraphSpec);
 
-                // All dirty projects + projects with outputs that need to be restored.
-                return dirtyProjects.Union(dirtyOutputs);
+                // All dirty projects + projects with outputs that need to be restored
+                // - the projects that are non transitive that never needed restore anyways, hence the insertion with the provider restore projects!
+                var resultSpecs = dirtyProjects.Union(dirtyOutputs);
+                if (hasDirtyNonTransitiveSpecs)
+                {
+                    resultSpecs = dependencyGraphSpec.Restore.Intersect(resultSpecs);
+                }
+                return resultSpecs;
             }
             else
             {
@@ -156,45 +169,13 @@ namespace NuGet.SolutionRestoreManager
                 .ToArray();
         }
 
-        internal static IList<string> GetAllDirtyParentsFaster(List<string> DirtySpecs, DependencyGraphSpec dependencyGraphSpec)
-        {
-            var projectsByUniqueName = dependencyGraphSpec.Projects
-                .ToDictionary(t => t.RestoreMetadata.ProjectUniqueName, t => t, PathUtility.GetStringComparerBasedOnOS());
-
-            var DirtyProjects = new List<string>();
-
-            var added = new SortedSet<string>(PathUtility.GetStringComparerBasedOnOS());
-            var toWalk = new Stack<string>(DirtySpecs);
-
-            while (toWalk.Count > 0)
-            {
-                var spec = toWalk.Pop();
-
-                if (spec != null)
-                {
-                    DirtyProjects.Add(spec);
-
-                    //// Find children
-                    //foreach (var projectName in GetProjectReferenceNames(spec, projectsByUniqueName))
-                    //{
-                    //    if (added.Add(projectName))
-                    //    {
-                    //        toWalk.Push(GetProjectSpec(projectName));
-                    //    }
-                    //}
-                }
-            }
-
-            return DirtyProjects;
-        }
-
         internal static void GetOutputFilePaths(PackageSpec packageSpec, out string assetsFilePath, out string targetsFilePath, out string propsFilePath, out string lockFilePath)
         {
             assetsFilePath = GetAssetsFilePath(packageSpec);
             targetsFilePath = BuildAssetsUtils.GetMSBuildFilePath(packageSpec, BuildAssetsUtils.TargetsExtension);
             propsFilePath = BuildAssetsUtils.GetMSBuildFilePath(packageSpec, BuildAssetsUtils.PropsExtension);
-            lockFilePath = packageSpec.RestoreMetadata.RestoreLockProperties != null ?
-                packageSpec.RestoreMetadata.RestoreLockProperties.NuGetLockFilePath :
+            lockFilePath = packageSpec.RestoreMetadata.ProjectStyle == ProjectStyle.PackageReference ?
+                PackagesLockFileUtilities.GetNuGetLockFilePath(packageSpec) :
                 null;
         }
 
@@ -238,9 +219,15 @@ namespace NuGet.SolutionRestoreManager
             }
             return null;
         }
-    }
 
-    internal struct OutputWriteTime
+        public void CleanCache()
+        {
+            _failedProjects.Clear();
+            _cachedDependencyGraphSpec = null;
+            _outputWriteTimes.Clear();
+        }
+
+        internal struct OutputWriteTime
     {
         internal DateTime _lastAssetsFileWriteTime;
         internal DateTime _lastTargetsFileWriteTime;

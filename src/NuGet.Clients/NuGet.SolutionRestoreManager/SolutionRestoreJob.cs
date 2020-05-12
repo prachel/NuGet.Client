@@ -339,16 +339,21 @@ namespace NuGet.SolutionRestoreManager
                 var (originalDgSpec, additionalMessages) = await DependencyGraphRestoreUtility.GetSolutionRestoreSpecAndAdditionalMessages(_solutionManager, cacheContext);
                 // Run solution based up to date check.
                 var projectsNeedingRestore = _solutionUpToDateChecker.PerformUpToDateCheck(originalDgSpec).AsList();
-                // recorded the number of up to date projects
-                _upToDateProjectCount = originalDgSpec.Restore.Count - projectsNeedingRestore.Count;
 
-                // Update the dg spec.
-                var dgSpec = originalDgSpec.WithoutRestores();
-                foreach (var uniqueProjectId in projectsNeedingRestore)
+                DependencyGraphSpec dgSpec = originalDgSpec;
+                // Only use the optimization results if the restore is not force.
+                // Still run the optimization check anyways to prep the cache for a potential future non-force optimization
+                if (!forceRestore)
                 {
-                    dgSpec.AddRestore(uniqueProjectId);
+                    // Update the dg spec.
+                    dgSpec = originalDgSpec.WithoutRestores();
+                    foreach (var uniqueProjectId in projectsNeedingRestore)
+                    {
+                        dgSpec.AddRestore(uniqueProjectId);
+                    }
+                    // recorded the number of up to date projects
+                    _upToDateProjectCount = originalDgSpec.Restore.Count - projectsNeedingRestore.Count;
                 }
-
                 intervalTracker.EndIntervalMeasure(RestoreTelemetryEvent.SolutionDependencyGraphSpecCreation);
                 intervalTracker.StartIntervalMeasure();
 

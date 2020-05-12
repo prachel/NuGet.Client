@@ -19,21 +19,7 @@ namespace NuGet.SolutionRestoreManager.Test
     public class SolutionUpToDateCheckerTests
     {
         [Fact]
-        public void GetOutputFilePaths_AllIntermediateOutputsGoToTheOutputFolder()
-        {
-            var packageSpec = GetPackageSpec("A");
-            SolutionUpToDateChecker.GetOutputFilePaths(packageSpec, out string assetsFilePath, out string targetsFilePath, out string propsFilePath, out string lockFilePath);
-
-            var expectedIntermediateFolder = packageSpec.RestoreMetadata.OutputPath;
-
-            Path.GetDirectoryName(assetsFilePath).Should().Be(expectedIntermediateFolder);
-            Path.GetDirectoryName(targetsFilePath).Should().Be(expectedIntermediateFolder);
-            Path.GetDirectoryName(propsFilePath).Should().Be(expectedIntermediateFolder);
-            lockFilePath.Should().BeNull();
-        }
-
-        [Fact]
-        public void GetOutputFilePaths_IncludesLockFileOnlyWhenNecessary()
+        public void GetOutputFilePaths_GetOutputFilePaths_AllIntermediateOutputsGoToTheOutputFolder()
         {
             var packageSpec = GetPackageSpec("A");
             packageSpec.RestoreMetadata.RestoreLockProperties = new RestoreLockProperties(restorePackagesWithLockFile: "true", nuGetLockFilePath: null, restoreLockedMode: true);
@@ -58,7 +44,7 @@ namespace NuGet.SolutionRestoreManager.Test
             var expectedIntermediateFolder = packageSpec.RestoreMetadata.OutputPath;
             var expectedAssetsFolder = Path.GetDirectoryName(packageSpec.FilePath);
 
-            Path.GetDirectoryName(assetsFilePath).Should().Be(expectedIntermediateFolder);
+            Path.GetDirectoryName(assetsFilePath).Should().Be(expectedAssetsFolder);
             Path.GetDirectoryName(targetsFilePath).Should().Be(expectedIntermediateFolder);
             Path.GetDirectoryName(propsFilePath).Should().Be(expectedIntermediateFolder);
             lockFilePath.Should().BeNull();
