@@ -387,7 +387,7 @@ namespace NuGet.Commands
         {
             string path;
 
-            if (project.RestoreMetadata.ProjectStyle == ProjectStyle.PackageReference || project.RestoreMetadata.ProjectStyle == ProjectStyle.DotnetToolReference)
+            if (project.RestoreMetadata?.ProjectStyle == ProjectStyle.PackageReference || project.RestoreMetadata?.ProjectStyle == ProjectStyle.DotnetToolReference)
             {
                 // PackageReference style projects
                 var projFileName = Path.GetFileName(project.RestoreMetadata.ProjectPath);
