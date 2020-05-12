@@ -228,10 +228,11 @@ namespace NuGet.SolutionRestoreManager
         }
 
         internal struct OutputWriteTime
-    {
-        internal DateTime _lastAssetsFileWriteTime;
-        internal DateTime _lastTargetsFileWriteTime;
-        internal DateTime _lastPropsFileWriteTime;
-        internal DateTime _lastLockFileWriteTime;
+        {
+            internal DateTime _lastAssetsFileWriteTime;
+            internal DateTime _lastTargetsFileWriteTime;
+            internal DateTime _lastPropsFileWriteTime;
+            internal DateTime _lastLockFileWriteTime;
+        }
     }
 }
