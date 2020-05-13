@@ -352,6 +352,11 @@ namespace NuGet.SolutionRestoreManager
                     {
                         dgSpec.AddRestore(uniqueProjectId);
                     }
+                    // loop through all legacy PackageReference projects. We don't know how to replay their warnings & errors yet.
+                    foreach(var project in (await _solutionManager.GetNuGetProjectsAsync()).Where(e => e is LegacyPackageReferenceProject).Select(e => e as LegacyPackageReferenceProject))
+                    {
+                        dgSpec.AddRestore(project.MSBuildProjectPath);
+                    }
                     // recorded the number of up to date projects
                     _upToDateProjectCount = originalDgSpec.Restore.Count - projectsNeedingRestore.Count;
                 }
