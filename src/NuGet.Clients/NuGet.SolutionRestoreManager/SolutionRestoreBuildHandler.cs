@@ -63,15 +63,17 @@ namespace NuGet.SolutionRestoreManager
         public SolutionRestoreBuildHandler(
             ISettings settings,
             ISolutionRestoreWorker restoreWorker,
-            IVsSolutionBuildManager3 buildManager)
+            IVsSolutionBuildManager3 buildManager,
+            ISolutionRestoreChecker solutionRestoreChecker)
         {
             Assumes.Present(settings);
             Assumes.Present(restoreWorker);
             Assumes.Present(buildManager);
+            Assumes.Present(solutionRestoreChecker);
 
             Settings = new Lazy<ISettings>(() => settings);
             SolutionRestoreWorker = new Lazy<ISolutionRestoreWorker>(() => restoreWorker);
-
+            SolutionRestoreChecker = new Lazy<ISolutionRestoreChecker>(() => solutionRestoreChecker);
             _solutionBuildManager = buildManager;
 
             _isMEFInitialized = true;
