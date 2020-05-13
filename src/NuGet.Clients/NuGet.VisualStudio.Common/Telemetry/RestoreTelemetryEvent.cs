@@ -12,11 +12,12 @@ namespace NuGet.VisualStudio
     /// </summary>
     public class RestoreTelemetryEvent : ActionEventBase
     {
-        public static string RestoreOperationChecks = nameof(RestoreOperationChecks);
-        public static string PackagesConfigRestore = nameof(PackagesConfigRestore);
-        public static string SolutionDependencyGraphSpecCreation = nameof(SolutionDependencyGraphSpecCreation);
-        public static string PackageReferenceRestoreDuration = nameof(PackageReferenceRestoreDuration);
-        public const string UpToDateProjectCount = nameof(UpToDateProjectCount);
+        public const string RestoreOperationChecks = nameof(RestoreOperationChecks);
+        public const string PackagesConfigRestore = nameof(PackagesConfigRestore);
+        public const string SolutionDependencyGraphSpecCreation = nameof(SolutionDependencyGraphSpecCreation);
+        public const string PackageReferenceRestoreDuration = nameof(PackageReferenceRestoreDuration);
+        public const string SolutionUpToDateCheck = nameof(SolutionUpToDateCheck);
+        private const string UpToDateProjectCount = nameof(UpToDateProjectCount);
 
         public RestoreTelemetryEvent(
             string operationId,

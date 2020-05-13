@@ -122,7 +122,7 @@ namespace NuGet.Commands.Test
             updated.FilePath = projectPath;
 
             updated.RestoreMetadata = new ProjectRestoreMetadata();
-            updated.RestoreMetadata.CrossTargeting = updated.TargetFrameworks.Count > 0;
+            updated.RestoreMetadata.CrossTargeting = updated.TargetFrameworks.Count > 1;
             updated.RestoreMetadata.OriginalTargetFrameworks = updated.TargetFrameworks.Select(e => e.FrameworkName.GetShortFolderName()).ToList();
             updated.RestoreMetadata.OutputPath = projectDir;
             updated.RestoreMetadata.ProjectStyle = ProjectStyle.PackageReference;

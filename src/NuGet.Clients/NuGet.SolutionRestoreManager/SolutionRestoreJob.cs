@@ -335,6 +335,9 @@ namespace NuGet.SolutionRestoreManager
 
                 // Get full dg spec
                 var (originalDgSpec, additionalMessages) = await DependencyGraphRestoreUtility.GetSolutionRestoreSpecAndAdditionalMessages(_solutionManager, cacheContext);
+                intervalTracker.EndIntervalMeasure(RestoreTelemetryEvent.SolutionDependencyGraphSpecCreation);
+
+                intervalTracker.StartIntervalMeasure();
                 // Run solution based up to date check.
                 var projectsNeedingRestore = _solutionUpToDateChecker.PerformUpToDateCheck(originalDgSpec).AsList();
 
@@ -352,7 +355,7 @@ namespace NuGet.SolutionRestoreManager
                     // recorded the number of up to date projects
                     _upToDateProjectCount = originalDgSpec.Restore.Count - projectsNeedingRestore.Count;
                 }
-                intervalTracker.EndIntervalMeasure(RestoreTelemetryEvent.SolutionDependencyGraphSpecCreation);
+                intervalTracker.EndIntervalMeasure(RestoreTelemetryEvent.SolutionUpToDateCheck);
                 intervalTracker.StartIntervalMeasure();
 
                 // Avoid restoring if all the projects are up to date, or the solution does not have build integrated projects.
